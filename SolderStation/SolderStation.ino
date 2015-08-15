@@ -19,10 +19,9 @@
 
 Adafruit_ST7735 tft = Adafruit_ST7735(cs_tft, dc, rst);  // Invoke custom library
 
-float pwm = 0; //pwm Out Val 0.. 255
+int pwm_out = 0;
 int target = 0;
 int actual_temp = 25;
-int soll_temp_tmp;
 unsigned long last_time;
 long sum = 0;
 long dt = 0;
@@ -50,9 +49,7 @@ void setup(void) {
 	tft.setRotation(0);	// 0 - Portrait, 1 - Lanscape
 	tft.fillScreen(ST7735_BLACK);
 	tft.setTextWrap(true);
-	
-	
-	
+
 	//Print station Logo
 	tft.drawBitmap(2,1,stationLOGO1,124,47,ST7735_GREY);
 
@@ -70,7 +67,7 @@ void setup(void) {
 	delay(500);
 	
 	//Print Iron
-  tft.fillScreen(ST7735_BLACK);
+    tft.fillScreen(ST7735_BLACK);
 	tft.drawBitmap(0,0,ptl_logo_bits,128,160,ST7735_GREY);
 //	tft.drawBitmap(15,50,iron,100,106,ST7735_GREY);
 //	tft.drawBitmap(17,52,iron,100,106,ST7735_YELLOW);
@@ -130,63 +127,50 @@ void setup(void) {
 	
 	tft.setTextSize(2);
 
-	writeHeating(target, actual_temp, pwm);
-
 }
 
 void loop() {
 
 	int old_temp = actual_temp;
 	actual_temp = getTemperature();
+	writeHeating(target, actual_temp, pwm_out);
 
 	if((abs(analogRead(POTI)-initial_pos) < 20) && stopped)
 		return;
 
 	stopped = false;
-  
-  target = map(analogRead(POTI), 1023, 0, AMBIENT_TEMP, MAX_POTI);
+
+	target = map(analogRead(POTI), 1023, 0, AMBIENT_TEMP, MAX_POTI);
   
 	if (!digitalRead(STANDBYin))
 		doStandby();
 	else
 		tft.setTextColor(ST7735_WHITE);
 
-
-
-	/* PWM */
+	/* PID */
+	float pid;
 	dt = micros() - last_time;
 	/* proportional */
-	pwm = Kp*(actual_temp-old_temp);
+	pwm_out = Kp*(target - actual_temp);
 	/* integral */
 	sum += (actual_temp-target)*dt;
-	pwm += Ki*sum;
+	pid += -Ki*sum;
+
 	/* derivativ */
-	pwm += Kd*(actual_temp-old_temp)/dt;
+	pid += Kd*(actual_temp-old_temp)/dt;
+  	if (pwm_out < 0) pwm_out = 0;
+	if (pwm_out > 255) pwm_out = 255;
 
-	// TODO remove this when PWM work
-	int diff = (soll_temp_tmp + OVER_SHOT)- actual_temp;
-	pwm = diff*CNTRL_GAIN;
-	
-	int MAX_PWM;
-
-	//Set max heating Power 
-	MAX_PWM = actual_temp <= STANDBY_TEMP ? MAX_PWM_LOW : MAX_PWM_HI;
-
-	//8 Bit Range
-	pwm = pwm > MAX_PWM ? pwm = MAX_PWM : pwm < 0 ? pwm = 0 : pwm;
-	
-	//NOTfall sicherheit / Spitze nicht eingesteckt
-	if (actual_temp > MAX_POTI + 50){
-		pwm = 0;
+  	// Emergency safety / tip is not plugged
+  	if (actual_temp > MAX_POTI + 50){
+		pwm_out = 0;
 		actual_temp = 0;
 		initial_pos = analogRead(POTI);
 		stopped = true;
 	}
 	
 	
-	analogWrite(PWMpin, pwm);
-
-	writeHeating(target, actual_temp, pwm);
+	analogWrite(PWMpin, pwm_out);
 	
 	delay(DELAY_MAIN_LOOP);		//wait for some time
 }
@@ -194,130 +178,119 @@ void loop() {
 
 int getTemperature()
 {
-  analogWrite(PWMpin, 0);		//switch off heater
-  delay(DELAY_MEASURE);			//wait for some time (to get low pass filter in steady state)
-  int adcValue = analogRead(TEMPin); // read the input on analog pin 7:
-  Serial.print("ADC Value ");
-  Serial.print(adcValue);
-  analogWrite(PWMpin, pwm);	//switch heater back to last value
-  return round(((float) adcValue)*ADC_TO_TEMP_GAIN+AMBIENT_TEMP); //apply linear conversion to actual temperature
+	analogWrite(PWMpin, 0);		// switch off heater
+	delay(DELAY_MEASURE);			// wait for some time (to get low pass filter in steady state)
+	int adcValue = analogRead(TEMPin); // read the input on analog pin 7:
+	Serial.print("ADC Value ");
+	Serial.print(adcValue);
+	analogWrite(PWMpin, pwm_out);	//switch heater back to last value
+	return round(((float) adcValue)*ADC_TO_TEMP_GAIN+AMBIENT_TEMP); //apply linear conversion to actual temperature
 }
 
+void writeHeating(int solder, int actual, int pwm){
 
+	static int solder_old = 	10;
+	static int old_temp = 	10;
+	static int pwm_old = 	10;
 
-
-
-void writeHeating(int tempSOLL, int tempVAL, int pwmVAL){
-	static int d_tempSOLL = 2;		//Tiefpass für Anzeige (Poti zittern)
-
-	static int tempSOLL_OLD = 	10;
-	static int tempVAL_OLD	= 	10;
-	static int pwmVAL_OLD	= 	10;
-	//TFT Anzeige
-	
-	pwmVAL = map(pwmVAL, 0, 255, 0, 100);
+	pwm = map(pwm, 0, 255, 0, 100);
 	
 	tft.setTextSize(5);
-	if (tempVAL_OLD != tempVAL){
+	if (old_temp != actual){
 		tft.setCursor(30,57);
 		tft.setTextColor(ST7735_BLACK);
-		//tft.print(tempSOLL_OLD);
-		//erste Stelle unterschiedlich
-		if ((tempVAL_OLD/100) != (tempVAL/100)){
-			tft.print(tempVAL_OLD/100);
+
+		if ((old_temp /100) != (actual /100)){
+			tft.print(old_temp /100);
 		}
 		else
 			tft.print(" ");
 		
-		if ( ((tempVAL_OLD/10)%10) != ((tempVAL/10)%10) )
-			tft.print((tempVAL_OLD/10)%10 );
+		if ( ((old_temp /10)%10) != ((actual /10)%10) )
+			tft.print((old_temp /10)%10 );
 		else
 			tft.print(" ");
 		
-		if ( (tempVAL_OLD%10) != (tempVAL%10) )
-			tft.print(tempVAL_OLD%10 );
+		if ( (old_temp %10) != (actual %10) )
+			tft.print(old_temp %10 );
 		
 		tft.setCursor(30,57);
 		tft.setTextColor(ST7735_WHITE);
 		
-		if (tempVAL < 100)
+		if (actual < 100)
 			tft.print(" ");
-		if (tempVAL <10)
+		if (actual <10)
 			tft.print(" ");
 		
-		int tempDIV = round(float(tempSOLL - tempVAL)*8.5);
+		int tempDIV = round(float(solder - actual)*8.5);
 		tempDIV = tempDIV > 254 ? tempDIV = 254 : tempDIV < 0 ? tempDIV = 0 : tempDIV;
 		tft.setTextColor(Color565(tempDIV, 255-tempDIV, 0));
 		if (standby_act)
 			tft.setTextColor(ST7735_CYAN);
-		tft.print(tempVAL);
+		tft.print(actual);
 		
-		tempVAL_OLD = tempVAL;
+		old_temp = actual;
 	}
 	
-	//if (tempSOLL_OLD != tempSOLL){
-	if ((tempSOLL_OLD+d_tempSOLL < tempSOLL) || (tempSOLL_OLD-d_tempSOLL > tempSOLL)){
+	if ( abs(solder_old - solder) > 2 ) {
 		tft.setCursor(30,102);
 		tft.setTextColor(ST7735_BLACK);
-		//tft.print(tempSOLL_OLD);
-		//erste Stelle unterschiedlich
-		if ((tempSOLL_OLD/100) != (tempSOLL/100)){
-			tft.print(tempSOLL_OLD/100);
+
+		if ((solder_old /100) != (solder /100)){
+			tft.print(solder_old /100);
 		}
 		else
 			tft.print(" ");
 		
-		if ( ((tempSOLL_OLD/10)%10) != ((tempSOLL/10)%10) )
-			tft.print((tempSOLL_OLD/10)%10 );
+		if ( ((solder_old /10)%10) != ((solder /10)%10) )
+			tft.print((solder_old /10)%10 );
 		else
 			tft.print(" ");
 		
-		if ( (tempSOLL_OLD%10) != (tempSOLL%10) )
-			tft.print(tempSOLL_OLD%10 );
+		if ( (solder_old %10) != (solder %10) )
+			tft.print(solder_old %10 );
 		
-		//Neuen Wert in Weiß schreiben
+		//Post new value in White
 		tft.setCursor(30,102);
 		tft.setTextColor(ST7735_WHITE);
-		if (tempSOLL < 100)
+		if (solder < 100)
 			tft.print(" ");
-		if (tempSOLL <10)
+		if (solder <10)
 			tft.print(" ");
 		
-		tft.print(tempSOLL);
-		tempSOLL_OLD = tempSOLL;
+		tft.print(solder);
+		solder_old = solder;
 		
 	}
 	
 	
 	tft.setTextSize(2);
-	if (pwmVAL_OLD != pwmVAL){
+	if (pwm_old != pwm){
 		tft.setCursor(80,144);
 		tft.setTextColor(ST7735_BLACK);
-		//tft.print(tempSOLL_OLD);
-		//erste stelle Unterscheidlich
-		if ((pwmVAL_OLD/100) != (pwmVAL/100)){
-			tft.print(pwmVAL_OLD/100);
+		if ((pwm_old /100) != (pwm /100)){
+			tft.print(pwm_old /100);
 		}
 		else
 			tft.print(" ");
 		
-		if ( ((pwmVAL_OLD/10)%10) != ((pwmVAL/10)%10) )
-			tft.print((pwmVAL_OLD/10)%10 );
+		if ( ((pwm_old /10)%10) != ((pwm /10)%10) )
+			tft.print((pwm_old /10)%10 );
 		else
 			tft.print(" ");
 		
-		if ( (pwmVAL_OLD%10) != (pwmVAL%10) )
-			tft.print(pwmVAL_OLD%10 );
+		if ( (pwm_old %10) != (pwm %10) )
+			tft.print(pwm_old %10 );
 		
 		tft.setCursor(80,144);
 		tft.setTextColor(ST7735_WHITE);
-		if (pwmVAL < 100)
+		if (pwm < 100)
 			tft.print(" ");
-		if (pwmVAL <10)
+		if (pwm <10)
 			tft.print(" ");
 		
-		tft.print(pwmVAL);
-		pwmVAL_OLD = pwmVAL;
+		tft.print(pwm);
+		pwm_old = pwm;
 		
 	}
 	
@@ -330,8 +303,6 @@ void doStandby(){
   
 	tft.setCursor(2,55);
 	tft.setTextColor(ST7735_BLACK);
-	tft.print("Standby");
-//	target = STANDBY_TEMP;
 
 	target = (!stopped && (target >= STANDBY_TEMP ))?  STANDBY_TEMP : target;
 
@@ -339,7 +310,7 @@ void doStandby(){
 
 
 uint16_t Color565(uint8_t r, uint8_t g, uint8_t b) {
-  return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+	return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
 }
 
 
