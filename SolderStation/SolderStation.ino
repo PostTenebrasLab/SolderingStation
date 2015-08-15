@@ -7,24 +7,28 @@
 
 
 #include <Adafruit_GFX.h>    // Core graphics library
-#include <Adafruit_QDTech.h> // Hardware-specific library
+#include <Adafruit_ST7735.h> // Hardware-specific library
+#define ST7735_GREY 0x3333
 #include <SPI.h>
+
 
 #include "SolderStation.h"
 #include "iron.h"
 #include "stationLOGO.h"
 
 
-Adafruit_QDTech tft = Adafruit_QDTech(cs_tft, dc, rst);  // Invoke custom library
+Adafruit_ST7735 tft = Adafruit_ST7735(cs_tft, dc, rst);  // Invoke custom library
 
 float pwm = 0; //pwm Out Val 0.. 255
-int target = 25;
+int target = 0;
 int actual_temp = 25;
 int soll_temp_tmp;
 unsigned long last_time;
 long sum = 0;
 long dt = 0;
 boolean standby_act = false;
+int initial_pos;
+boolean stopped = true;
 
 void setup(void) {
 	
@@ -38,20 +42,21 @@ void setup(void) {
 	setPwmFrequency(PWMpin, PWM_DIV);
 	digitalWrite(PWMpin, LOW);
 	
-	tft.init();
+	tft.initR(INITR_BLACKTAB);
 	SPI.setClockDivider(SPI_CLOCK_DIV4);  // 4MHz
-	
+
+	initial_pos = analogRead(POTI);
 	
 	tft.setRotation(0);	// 0 - Portrait, 1 - Lanscape
-	tft.fillScreen(QDTech_BLACK);
+	tft.fillScreen(ST7735_BLACK);
 	tft.setTextWrap(true);
 	
 	
 	
 	//Print station Logo
-	tft.drawBitmap(2,1,stationLOGO1,124,47,QDTech_GREY);
+	tft.drawBitmap(2,1,stationLOGO1,124,47,ST7735_GREY);
 
-	tft.drawBitmap(3,3,stationLOGO1,124,47,QDTech_YELLOW);
+	tft.drawBitmap(3,3,stationLOGO1,124,47,ST7735_YELLOW);
 	tft.drawBitmap(3,3,stationLOGO2,124,47,Color565(254,147,52));
 	tft.drawBitmap(3,3,stationLOGO3,124,47,Color565(255,78,0));
 	
@@ -65,27 +70,30 @@ void setup(void) {
 	delay(500);
 	
 	//Print Iron
-	tft.drawBitmap(15,50,iron,100,106,QDTech_GREY);
-	tft.drawBitmap(17,52,iron,100,106,QDTech_YELLOW);
+  tft.fillScreen(ST7735_BLACK);
+	tft.drawBitmap(0,0,ptl_logo_bits,128,160,ST7735_GREY);
+//	tft.drawBitmap(15,50,iron,100,106,ST7735_GREY);
+//	tft.drawBitmap(17,52,iron,100,106,ST7735_YELLOW);
 	delay(500);
-	
+ 
+	tft.fillScreen(ST7735_BLACK);
 	tft.setTextSize(2);
-	tft.setTextColor(QDTech_GREY);
+	tft.setTextColor(ST7735_GREY);
 	tft.setCursor(70,130);
 	tft.print(VERSION);
 	
 	tft.setTextSize(2);
-	tft.setTextColor(QDTech_YELLOW);
+	tft.setTextColor(ST7735_YELLOW);
 	tft.setCursor(72,132);
 	tft.print(VERSION);
 	
 	tft.setTextSize(1);
-	tft.setTextColor(QDTech_GREY);
+	tft.setTextColor(ST7735_GREY);
 	tft.setCursor(103,0);
 	tft.print("v");
 	tft.print(VERSION);
 	
-	tft.setTextColor(QDTech_YELLOW);
+	tft.setTextColor(ST7735_YELLOW);
 	tft.setCursor(104,1);
 	tft.print("v");
 	tft.print(VERSION);
@@ -94,12 +102,12 @@ void setup(void) {
 #endif
 	
 	
-	tft.fillRect(0,47,128,125,QDTech_BLACK);
-	tft.setTextColor(QDTech_WHITE);
+	tft.fillRect(0,47,128,125,ST7735_BLACK);
+	tft.setTextColor(ST7735_WHITE);
 
 	tft.setTextSize(1);
 	tft.setCursor(1,84);
-	tft.print("ist");
+	tft.print("actual");
 	
 	tft.setTextSize(2);
 	tft.setCursor(117,47);
@@ -107,7 +115,7 @@ void setup(void) {
 	
 	tft.setTextSize(1);
 	tft.setCursor(1,129);
-	tft.print("soll");
+	tft.print("target");
 	
 	tft.setTextSize(2);
 	tft.setCursor(117,92);
@@ -121,26 +129,34 @@ void setup(void) {
 	tft.print("pwm");
 	
 	tft.setTextSize(2);
-	
+
+	writeHeating(target, actual_temp, pwm);
+
 }
 
 void loop() {
 
 	int old_temp = actual_temp;
-	getTemperature();
-	// TODO don't
-	target = map(analogRead(POTI), 0, 1023, 0, MAX_POTI);
-	
+	actual_temp = getTemperature();
+
+	if((abs(analogRead(POTI)-initial_pos) < 20) && stopped)
+		return;
+
+	stopped = false;
+  
+  target = map(analogRead(POTI), 1023, 0, AMBIENT_TEMP, MAX_POTI);
+  
 	if (!digitalRead(STANDBYin))
-		isStandby();
+		doStandby();
 	else
-		tft.setTextColor(QDTech_WHITE);
+		tft.setTextColor(ST7735_WHITE);
+
 
 
 	/* PWM */
 	dt = micros() - last_time;
 	/* proportional */
-	pwm = Kp*actual_temp-old_temp;
+	pwm = Kp*(actual_temp-old_temp);
 	/* integral */
 	sum += (actual_temp-target)*dt;
 	pwm += Ki*sum;
@@ -155,7 +171,7 @@ void loop() {
 
 	//Set max heating Power 
 	MAX_PWM = actual_temp <= STANDBY_TEMP ? MAX_PWM_LOW : MAX_PWM_HI;
-	
+
 	//8 Bit Range
 	pwm = pwm > MAX_PWM ? pwm = MAX_PWM : pwm < 0 ? pwm = 0 : pwm;
 	
@@ -163,19 +179,20 @@ void loop() {
 	if (actual_temp > MAX_POTI + 50){
 		pwm = 0;
 		actual_temp = 0;
+		initial_pos = analogRead(POTI);
+		stopped = true;
 	}
 	
 	
 	analogWrite(PWMpin, pwm);
 
-	// TODO remove actual_temperature from writeHEATING() cos is a global variable
-	writeHEATING(target, actual_temp, pwm);
+	writeHeating(target, actual_temp, pwm);
 	
 	delay(DELAY_MAIN_LOOP);		//wait for some time
 }
 
 
-void getTemperature()
+int getTemperature()
 {
   analogWrite(PWMpin, 0);		//switch off heater
   delay(DELAY_MEASURE);			//wait for some time (to get low pass filter in steady state)
@@ -183,14 +200,14 @@ void getTemperature()
   Serial.print("ADC Value ");
   Serial.print(adcValue);
   analogWrite(PWMpin, pwm);	//switch heater back to last value
-  actual_temp = round(((float) adcValue)*ADC_TO_TEMP_GAIN+ADC_TO_TEMP_OFFSET); //apply linear conversion to actual temperature
+  return round(((float) adcValue)*ADC_TO_TEMP_GAIN+AMBIENT_TEMP); //apply linear conversion to actual temperature
 }
 
 
 
 
 
-void writeHEATING(int tempSOLL, int tempVAL, int pwmVAL){
+void writeHeating(int tempSOLL, int tempVAL, int pwmVAL){
 	static int d_tempSOLL = 2;		//Tiefpass für Anzeige (Poti zittern)
 
 	static int tempSOLL_OLD = 	10;
@@ -198,12 +215,12 @@ void writeHEATING(int tempSOLL, int tempVAL, int pwmVAL){
 	static int pwmVAL_OLD	= 	10;
 	//TFT Anzeige
 	
-	pwmVAL = map(pwmVAL, 0, 254, 0, 100);
+	pwmVAL = map(pwmVAL, 0, 255, 0, 100);
 	
 	tft.setTextSize(5);
 	if (tempVAL_OLD != tempVAL){
 		tft.setCursor(30,57);
-		tft.setTextColor(QDTech_BLACK);
+		tft.setTextColor(ST7735_BLACK);
 		//tft.print(tempSOLL_OLD);
 		//erste Stelle unterschiedlich
 		if ((tempVAL_OLD/100) != (tempVAL/100)){
@@ -221,7 +238,7 @@ void writeHEATING(int tempSOLL, int tempVAL, int pwmVAL){
 			tft.print(tempVAL_OLD%10 );
 		
 		tft.setCursor(30,57);
-		tft.setTextColor(QDTech_WHITE);
+		tft.setTextColor(ST7735_WHITE);
 		
 		if (tempVAL < 100)
 			tft.print(" ");
@@ -232,7 +249,7 @@ void writeHEATING(int tempSOLL, int tempVAL, int pwmVAL){
 		tempDIV = tempDIV > 254 ? tempDIV = 254 : tempDIV < 0 ? tempDIV = 0 : tempDIV;
 		tft.setTextColor(Color565(tempDIV, 255-tempDIV, 0));
 		if (standby_act)
-			tft.setTextColor(QDTech_CYAN);
+			tft.setTextColor(ST7735_CYAN);
 		tft.print(tempVAL);
 		
 		tempVAL_OLD = tempVAL;
@@ -241,7 +258,7 @@ void writeHEATING(int tempSOLL, int tempVAL, int pwmVAL){
 	//if (tempSOLL_OLD != tempSOLL){
 	if ((tempSOLL_OLD+d_tempSOLL < tempSOLL) || (tempSOLL_OLD-d_tempSOLL > tempSOLL)){
 		tft.setCursor(30,102);
-		tft.setTextColor(QDTech_BLACK);
+		tft.setTextColor(ST7735_BLACK);
 		//tft.print(tempSOLL_OLD);
 		//erste Stelle unterschiedlich
 		if ((tempSOLL_OLD/100) != (tempSOLL/100)){
@@ -260,7 +277,7 @@ void writeHEATING(int tempSOLL, int tempVAL, int pwmVAL){
 		
 		//Neuen Wert in Weiß schreiben
 		tft.setCursor(30,102);
-		tft.setTextColor(QDTech_WHITE);
+		tft.setTextColor(ST7735_WHITE);
 		if (tempSOLL < 100)
 			tft.print(" ");
 		if (tempSOLL <10)
@@ -275,7 +292,7 @@ void writeHEATING(int tempSOLL, int tempVAL, int pwmVAL){
 	tft.setTextSize(2);
 	if (pwmVAL_OLD != pwmVAL){
 		tft.setCursor(80,144);
-		tft.setTextColor(QDTech_BLACK);
+		tft.setTextColor(ST7735_BLACK);
 		//tft.print(tempSOLL_OLD);
 		//erste stelle Unterscheidlich
 		if ((pwmVAL_OLD/100) != (pwmVAL/100)){
@@ -293,7 +310,7 @@ void writeHEATING(int tempSOLL, int tempVAL, int pwmVAL){
 			tft.print(pwmVAL_OLD%10 );
 		
 		tft.setCursor(80,144);
-		tft.setTextColor(QDTech_WHITE);
+		tft.setTextColor(ST7735_WHITE);
 		if (pwmVAL < 100)
 			tft.print(" ");
 		if (pwmVAL <10)
@@ -309,15 +326,15 @@ void writeHEATING(int tempSOLL, int tempVAL, int pwmVAL){
 /*
  * turn the screen off and change target temp to STANDBY_TEMP
  */
-void isStandby(){
-
+void doStandby(){
+  
 	tft.setCursor(2,55);
-	tft.setTextColor(QDTech_BLACK);
+	tft.setTextColor(ST7735_BLACK);
 	tft.print("Standby");
-	target = STANDBY_TEMP;
+//	target = STANDBY_TEMP;
 
-	(standby_act && (target >= STANDBY_TEMP ))? soll_temp_tmp = STANDBY_TEMP: soll_temp_tmp = target;
-	standby_act = !digitalRead(STANDBYin);
+	target = (!stopped && (target >= STANDBY_TEMP ))?  STANDBY_TEMP : target;
+
 }
 
 
