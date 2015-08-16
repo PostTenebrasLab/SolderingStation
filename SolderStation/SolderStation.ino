@@ -24,12 +24,15 @@ int target = AMBIENT_TEMP;
 int actual_temp = 25;
 unsigned long last_time;
 long sum = 0;
-long dt = 0;
 boolean standby = false;
 int initial_pos;
+boolean unplugged_time;
 boolean stopped = true;
 unsigned long idle_time;
 
+/*
+ * Setup
+ */
 void setup(void) {
 	
 	pinMode(BLpin, OUTPUT);
@@ -48,93 +51,84 @@ void setup(void) {
 	initial_pos = analogRead(POTI);
 	
 	tft.setRotation(0);	// 0 - Portrait, 1 - Lanscape
-	tft.fillScreen(ST7735_BLACK);
+	tft.fillScreen(ST7735_WHITE);
 	tft.setTextWrap(true);
-
-	//Print station Logo
-	tft.drawBitmap(2,1,stationLOGO1,124,47,ST7735_GREY);
-
-	tft.drawBitmap(3,3,stationLOGO1,124,47,ST7735_YELLOW);
-	tft.drawBitmap(3,3,stationLOGO2,124,47,Color565(254,147,52));
-	tft.drawBitmap(3,3,stationLOGO3,124,47,Color565(255,78,0));
 	
 	//BAcklight on
 	digitalWrite(BLpin, HIGH);
 	last_time = micros();
-	
+  unplugged_time = millis();
 	
 #if defined(INTRO)
 	
-	delay(500);
-	
-	//Print Iron
-    tft.fillScreen(ST7735_BLACK);
-	tft.drawBitmap(0,0,ptl_logo_bits,128,160,ST7735_WHITE);
-//	tft.drawBitmap(15,50,iron,100,106,ST7735_GREY);
-//	tft.drawBitmap(17,52,iron,100,106,ST7735_YELLOW);
-	delay(50000);
- 
-	tft.fillScreen(ST7735_BLACK);
-	tft.setTextSize(2);
-	tft.setTextColor(ST7735_GREY);
-	tft.setCursor(70,130);
-	tft.print(VERSION);
-	
-	tft.setTextSize(2);
-	tft.setTextColor(ST7735_YELLOW);
-	tft.setCursor(72,132);
-	tft.print(VERSION);
-	
-	tft.setTextSize(1);
-	tft.setTextColor(ST7735_GREY);
-	tft.setCursor(103,0);
-	tft.print("v");
-	tft.print(VERSION);
-	
-	tft.setTextColor(ST7735_YELLOW);
-	tft.setCursor(104,1);
-	tft.print("v");
-	tft.print(VERSION);
-	
+	//Print PTL logo
+	tft.fillScreen(ST7735_WHITE);
+	tft.drawBitmap(0,0,ptl_logo_bits,128,160,ST7735_GREY, ST7735_WHITE);
 	delay(2500);
+
+	//Print station Logo
+	tft.fillScreen(ST7735_WHITE);
+	tft.drawBitmap(2,1,stationLOGO1,124,47,ST7735_GREY);
+
+	tft.drawBitmap(3,3,stationLOGO1,124,47,ST7735_BLUE);
+	tft.drawBitmap(3,3,stationLOGO2,124,47,ST7735_GREY);
+	tft.drawBitmap(15,50,iron,100,106,ST7735_GREY);
+	tft.drawBitmap(17,52,iron,100,106,ST7735_BLUE);
+
+	delay(1000);
+	tft.fillScreen(ST7735_BLACK);
+	tft.setTextColor(ST7735_YELLOW);
+	tft.setCursor(75,1);
+	tft.print("PTL v");
+	tft.print(VERSION);
 #endif
-	
-	
+
+
 	tft.fillRect(0,47,128,125,ST7735_BLACK);
 	tft.setTextColor(ST7735_WHITE);
 
 	tft.setTextSize(1);
 	tft.setCursor(1,84);
 	tft.print("actual");
-	
+
 	tft.setTextSize(2);
 	tft.setCursor(117,47);
 	tft.print("o");
-	
+
 	tft.setTextSize(1);
 	tft.setCursor(1,129);
 	tft.print("target");
-	
+
 	tft.setTextSize(2);
 	tft.setCursor(117,92);
 	tft.print("o");
-	
+
 	tft.setCursor(80,144);
 	tft.print("   %");
-	
+
 	tft.setTextSize(1);
 	tft.setCursor(1,151);		//60
 	tft.print("pwm");
-	
+
 	tft.setTextSize(2);
 
 }
 
+/*
+ * Main loop
+ */
 void loop() {
 
 	int old_temp = actual_temp;
 	actual_temp = getTemperature();
-	writeHeating(target, actual_temp, pwm_out);
+
+  /* Detect unplugged pen, based on erratic mesures */
+	if(abs(old_temp-actual_temp) > 20 || millis() < unplugged_time){
+		writeHeating(target, AMBIENT_TEMP, pwm_out);
+    unplugged_time = millis() + 1000;
+    return;
+	} else
+		writeHeating(target, actual_temp, pwm_out);
 
 	if((abs(analogRead(POTI)-initial_pos) < 10) && stopped)
 		return;
@@ -151,34 +145,36 @@ void loop() {
 	}
 
 	/* PID */
-	float pid;
-	dt = micros() - last_time;
-	/* proportional */
-	pwm_out = Kp*(target - actual_temp);
-	/* integral */
-	sum += (actual_temp-target)*dt;
-	pid += -Ki*sum;
+	int dt = micros() - last_time;
+    int dtemp = target - actual_temp;
+  
+	/* Proportional used when not in bang-bang mode */
+	pwm_out = Kp*Kp*dtemp;
+  
+	/* Integral only to maintain temp when close to target (lower only) */
+    (dtemp > 0 && dtemp < 15) ? sum += dtemp*dt : sum = 0;
+	pwm_out += Ki*sum;
 
-	/* derivativ */
-	pid += Kd*(actual_temp-old_temp)/dt;
-  	if (pwm_out < 0) pwm_out = 0;
-	if (pwm_out > 255) pwm_out = 255;
+	/* Derivative NOT NECESSARY because we can't cool down */
+	pwm_out += -Kd*dtemp/dt;
 
-  	// Emergency safety / tip is not plugged
-  	if (actual_temp > MAX_POTI + 50){
-		pwm_out = 0;
-		actual_temp = 0;
-		initial_pos = analogRead(POTI);
+    /* constrain PWM between 0..PWM_MAX or bang-bang when far from target */
+    if (pwm_out < 0) pwm_out = 0;
+	if (pwm_out > 255 || dtemp > 20) pwm_out = PWM_MAX;
+
+    /* safefty turn off in case of overrun */
+    if (actual_temp > MAX_POTI + 50){
+        target = AMBIENT_TEMP;
+        pwm_out = 0;
 		stopped = true;
 	}
 	
-	
-	analogWrite(PWMpin, pwm_out);
-	
-	delay(DELAY_MAIN_LOOP);		//wait for some time
+	analogWrite(PWMpin, pwm_out);	
 }
 
-
+/*
+ * 
+ */
 int getTemperature()
 {
 	analogWrite(PWMpin, 0);		// switch off heater
@@ -190,8 +186,11 @@ int getTemperature()
 	return round(((float) adcValue)*ADC_TO_TEMP_GAIN+AMBIENT_TEMP); //apply linear conversion to actual temperature
 }
 
-void writeHeating(int solder, int actual, int pwm){
-
+/*
+ * 
+ */
+void writeHeating(int solder, int actual, int pwm)
+{
 	static int solder_old = 	10;
 	static int old_temp = 	10;
 	static int pwm_old = 	10;
@@ -302,8 +301,8 @@ void writeHeating(int solder, int actual, int pwm){
 /*
  * change target temp to STANDBY_TEMP
  */
-void doStandby(){
-  
+void doStandby()
+{  
 	tft.setCursor(2,55);
 	tft.setTextColor(ST7735_BLACK);
  
@@ -321,14 +320,20 @@ void doStandby(){
 
 }
 
-
-uint16_t Color565(uint8_t r, uint8_t g, uint8_t b) {
+/*
+ *  
+ */
+uint16_t Color565(uint8_t r, uint8_t g, uint8_t b) 
+{
 	return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
 }
 
 
-
-void setPwmFrequency(int pin, int divisor) {
+/*
+ * 
+ */
+void setPwmFrequency(int pin, int divisor) 
+{
   byte mode;
   if(pin == 5 || pin == 6 || pin == 9 || pin == 10) {
     switch(divisor) {

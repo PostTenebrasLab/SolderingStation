@@ -14,9 +14,9 @@
 #define PWMpin 	    3
 #define BLpin		5
 
-#define Kp          4.5
-#define Ki          30.0
-#define Kd          13.0
+#define Kp          1.4
+#define Ki          1.2
+#define Kd          0.0
 
 #define DELAY_MAIN_LOOP 	10
 #define DELAY_MEASURE 		50
@@ -26,7 +26,7 @@
 #define MAX_IDLE_TIME   600000  // max idle time (msec) before automatically power the solder off 
 
 #define MAX_POTI		    400		//400C
-
+#define PWM_MAX         230   // 0..255
 #define PWM_DIV             1024	//default: 64   31250/64 = 2ms
 
 int getTemperature();
