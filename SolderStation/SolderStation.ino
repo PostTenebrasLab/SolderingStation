@@ -20,14 +20,15 @@
 Adafruit_ST7735 tft = Adafruit_ST7735(cs_tft, dc, rst);  // Invoke custom library
 
 int pwm_out = 0;
-int target = 0;
+int target = AMBIENT_TEMP;
 int actual_temp = 25;
 unsigned long last_time;
 long sum = 0;
 long dt = 0;
-boolean standby_act = false;
+boolean standby = false;
 int initial_pos;
 boolean stopped = true;
+unsigned long idle_time;
 
 void setup(void) {
 	
@@ -68,10 +69,10 @@ void setup(void) {
 	
 	//Print Iron
     tft.fillScreen(ST7735_BLACK);
-	tft.drawBitmap(0,0,ptl_logo_bits,128,160,ST7735_GREY);
+	tft.drawBitmap(0,0,ptl_logo_bits,128,160,ST7735_WHITE);
 //	tft.drawBitmap(15,50,iron,100,106,ST7735_GREY);
 //	tft.drawBitmap(17,52,iron,100,106,ST7735_YELLOW);
-	delay(500);
+	delay(50000);
  
 	tft.fillScreen(ST7735_BLACK);
 	tft.setTextSize(2);
@@ -135,17 +136,19 @@ void loop() {
 	actual_temp = getTemperature();
 	writeHeating(target, actual_temp, pwm_out);
 
-	if((abs(analogRead(POTI)-initial_pos) < 20) && stopped)
+	if((abs(analogRead(POTI)-initial_pos) < 10) && stopped)
 		return;
 
 	stopped = false;
 
 	target = map(analogRead(POTI), 1023, 0, AMBIENT_TEMP, MAX_POTI);
   
-	if (!digitalRead(STANDBYin))
+	if (!digitalRead(STANDBYin)){ 
 		doStandby();
-	else
+	}	else {
 		tft.setTextColor(ST7735_WHITE);
+    standby = false;
+	}
 
 	/* PID */
 	float pid;
@@ -225,7 +228,7 @@ void writeHeating(int solder, int actual, int pwm){
 		int tempDIV = round(float(solder - actual)*8.5);
 		tempDIV = tempDIV > 254 ? tempDIV = 254 : tempDIV < 0 ? tempDIV = 0 : tempDIV;
 		tft.setTextColor(Color565(tempDIV, 255-tempDIV, 0));
-		if (standby_act)
+		if (standby)
 			tft.setTextColor(ST7735_CYAN);
 		tft.print(actual);
 		
@@ -297,13 +300,23 @@ void writeHeating(int solder, int actual, int pwm){
 }
 
 /*
- * turn the screen off and change target temp to STANDBY_TEMP
+ * change target temp to STANDBY_TEMP
  */
 void doStandby(){
   
 	tft.setCursor(2,55);
 	tft.setTextColor(ST7735_BLACK);
-
+ 
+  if(!standby){
+    standby = true;
+    idle_time = millis() + (MAX_IDLE_TIME);
+  }
+  /* turn off if idle time exceeded */ 
+  if(millis() > idle_time){
+    target = AMBIENT_TEMP;
+    stopped = true;
+  }
+  
 	target = (!stopped && (target >= STANDBY_TEMP ))?  STANDBY_TEMP : target;
 
 }

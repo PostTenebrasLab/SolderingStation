@@ -14,15 +14,16 @@
 #define PWMpin 	    3
 #define BLpin		5
 
-#define Kp          4.0
-#define Ki          20.0
+#define Kp          4.5
+#define Ki          30.0
 #define Kd          13.0
 
 #define DELAY_MAIN_LOOP 	10
 #define DELAY_MEASURE 		50
 #define ADC_TO_TEMP_GAIN 	0.53     // Compared to the original Weller Station
-#define AMBIENT_TEMP        25.0
+#define AMBIENT_TEMP        25
 #define STANDBY_TEMP		175
+#define MAX_IDLE_TIME   600000  // max idle time (msec) before automatically power the solder off 
 
 #define MAX_POTI		    400		//400C
 
