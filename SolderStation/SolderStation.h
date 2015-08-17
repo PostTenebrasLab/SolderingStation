@@ -1,7 +1,7 @@
 
 #define VERSION "1.1"
 
-//#define INTRO
+#define INTRO
 #define INVERT_POT
 //#define DEBUG
 
@@ -20,7 +20,7 @@
 
 #define PWM_CTE     0.17    // PWM ~ 0.17 * target -> maintain temp
 #define Kp          3.0     // old 1.4
-#define Ki          0.00001     // 
+#define Ki          0.006    // 
 #define Kd          2.0     // 
 
 #define DELAY_MEASURE 		50
