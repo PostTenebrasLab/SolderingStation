@@ -19,11 +19,11 @@
 
 Adafruit_ST7735 tft = Adafruit_ST7735(cs_tft, dc, rst);  // Invoke custom library
 
-int pwm_out = 0;
+float pwm_out = 0.0;
 int target = AMBIENT_TEMP;
 int actual_temp = 25;
 unsigned long last_time;
-long sum = 0;
+float sum = 0.0;
 boolean standby = false;
 int initial_pos;
 boolean unplugged_time;
@@ -34,7 +34,11 @@ unsigned long idle_time;
  * Setup
  */
 void setup(void) {
-	
+
+#ifdef DEBUG
+	Serial.begin(115200); //set serial debug interface to 115200 Baud
+#endif
+
 	pinMode(BLpin, OUTPUT);
 	digitalWrite(BLpin, LOW);
 	
@@ -48,7 +52,7 @@ void setup(void) {
 	tft.initR(INITR_BLACKTAB);
 	SPI.setClockDivider(SPI_CLOCK_DIV4);  // 4MHz
 
-	initial_pos = analogRead(POTI);
+	initial_pos = analogRead(POT);
 	
 	tft.setRotation(0);	// 0 - Portrait, 1 - Lanscape
 	tft.fillScreen(ST7735_WHITE);
@@ -57,7 +61,7 @@ void setup(void) {
 	//BAcklight on
 	digitalWrite(BLpin, HIGH);
 	last_time = micros();
-  unplugged_time = millis();
+    unplugged_time = millis();
 	
 #if defined(INTRO)
 	
@@ -122,54 +126,65 @@ void loop() {
 	int old_temp = actual_temp;
 	actual_temp = getTemperature();
 
-  /* Detect unplugged pen, based on erratic mesures */
-	if(abs(old_temp-actual_temp) > 20 || millis() < unplugged_time){
+    /* Detect unplugged pen, based on erratic measures */
+	if(abs(old_temp-actual_temp) > 20 || millis() < unplugged_time)
+	{
 		writeHeating(target, AMBIENT_TEMP, pwm_out);
-    unplugged_time = millis() + 1000;
-    return;
+    	unplugged_time = millis() + 1000;
+    	return;
+
 	} else
 		writeHeating(target, actual_temp, pwm_out);
 
-	if((abs(analogRead(POTI)-initial_pos) < 10) && stopped)
+	/* stopped until pot changes */
+	if((abs(analogRead(POT)-initial_pos) < 10) && stopped)
 		return;
 
 	stopped = false;
 
-	target = map(analogRead(POTI), 1023, 0, AMBIENT_TEMP, MAX_POTI);
-  
-	if (!digitalRead(STANDBYin)){ 
+#ifdef INVERT_POT
+	target = map(analogRead(POT), 1023, 0, AMBIENT_TEMP, MAX_POT);
+#else
+	target = map(analogRead(POT), 0, 1023, AMBIENT_TEMP, MAX_POT);
+#endif
+
+	if (!digitalRead(STANDBYin))
 		doStandby();
-	}	else {
+	else
+	{
 		tft.setTextColor(ST7735_WHITE);
-    standby = false;
+   		standby = false;
 	}
 
 	/* PID */
-	int dt = micros() - last_time;
+	int dt = millis() - last_time;
     int dtemp = target - actual_temp;
-  
+
+	/* base PWM to approx maintain target temp  ~ Cte * target */
+	pwm_out = PWM_CTE*target;
+
 	/* Proportional used when not in bang-bang mode */
-	pwm_out = Kp*Kp*dtemp;
-  
+	pwm_out += Kp*dtemp;
+
 	/* Integral only to maintain temp when close to target (lower only) */
-    (dtemp > 0 && dtemp < 15) ? sum += dtemp*dt : sum = 0;
-	pwm_out += Ki*sum;
+  (abs(dtemp) < 1 || abs(dtemp) > 15 ) ? sum = 0 : sum += dtemp*(float)dt/1000;
+	pwm_out += -Ki*sum;
 
 	/* Derivative NOT NECESSARY because we can't cool down */
-	pwm_out += -Kd*dtemp/dt;
+	pwm_out += -Kd*(float)(actual_temp-old_temp)/dt;
 
     /* constrain PWM between 0..PWM_MAX or bang-bang when far from target */
     if (pwm_out < 0) pwm_out = 0;
-	if (pwm_out > 255 || dtemp > 20) pwm_out = PWM_MAX;
+	if (pwm_out > PWM_MAX || dtemp > 30) pwm_out = PWM_MAX;
 
     /* safefty turn off in case of overrun */
-    if (actual_temp > MAX_POTI + 50){
+    if (actual_temp > MAX_POT + 50){
         target = AMBIENT_TEMP;
         pwm_out = 0;
 		stopped = true;
 	}
-	
-	analogWrite(PWMpin, pwm_out);	
+
+	analogWrite(PWMpin, (int)pwm_out);
 }
 
 /*
@@ -191,9 +206,9 @@ int getTemperature()
  */
 void writeHeating(int solder, int actual, int pwm)
 {
-	static int solder_old = 	10;
-	static int old_temp = 	10;
-	static int pwm_old = 	10;
+	static int solder_old = 10;
+	static int old_temp = 10;
+	static int pwm_old = 10;
 
 	pwm = map(pwm, 0, 255, 0, 100);
 	
@@ -202,16 +217,9 @@ void writeHeating(int solder, int actual, int pwm)
 		tft.setCursor(30,57);
 		tft.setTextColor(ST7735_BLACK);
 
-		if ((old_temp /100) != (actual /100)){
-			tft.print(old_temp /100);
-		}
-		else
-			tft.print(" ");
+		(old_temp /100) != (actual /100) ? tft.print(old_temp /100) : tft.print(" ");
 		
-		if ( ((old_temp /10)%10) != ((actual /10)%10) )
-			tft.print((old_temp /10)%10 );
-		else
-			tft.print(" ");
+		((old_temp /10)%10) != ((actual /10)%10) ? tft.print((old_temp /10)%10) : tft.print(" ");
 		
 		if ( (old_temp %10) != (actual %10) )
 			tft.print(old_temp %10 );
@@ -306,18 +314,18 @@ void doStandby()
 	tft.setCursor(2,55);
 	tft.setTextColor(ST7735_BLACK);
  
-  if(!standby){
-    standby = true;
-    idle_time = millis() + (MAX_IDLE_TIME);
-  }
-  /* turn off if idle time exceeded */ 
-  if(millis() > idle_time){
-    target = AMBIENT_TEMP;
-    stopped = true;
-  }
+    if(!standby){
+    	standby = true;
+	    idle_time = millis() + (MAX_IDLE_TIME);
+	}
+
+	/* turn off if idle time exceeded */
+	if(millis() > idle_time){
+    	target = AMBIENT_TEMP;
+	    stopped = true;
+	}
   
 	target = (!stopped && (target >= STANDBY_TEMP ))?  STANDBY_TEMP : target;
-
 }
 
 /*
