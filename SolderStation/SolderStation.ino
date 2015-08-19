@@ -160,22 +160,20 @@ void loop() {
 	int dt = millis() - last_time;
     int dtemp = target - actual_temp;
 
-	/* base PWM to approx maintain target temp  ~ Cte * target */
-	pwm_out = PWM_CTE*target;
-
 	/* Proportional used when not in bang-bang mode */
-	pwm_out += Kp*dtemp;
+	pwm_out = Kp*dtemp;
 
 	/* Integral only to maintain temp when close to target (lower only) */
-  (abs(dtemp) < 1 || abs(dtemp) > 10 ) ? sum = 0 : sum += dtemp*(float)dt/1000;
-	pwm_out += -Ki*sum;
+    sum += -sum/4 + dtemp*(float)dt;
+	pwm_out += Ki*sum;
+	last_time = millis();
 
 	/* Derivative NOT NECESSARY because we can't cool down */
 	pwm_out += -Kd*(float)(actual_temp-old_temp)/dt;
 
     /* constrain PWM between 0..PWM_MAX or bang-bang when far from target */
     if (pwm_out < 0) pwm_out = 0;
-	if (pwm_out > PWM_MAX || dtemp > 25) pwm_out = PWM_MAX;
+	if (pwm_out > PWM_MAX) pwm_out = PWM_MAX;
 
     /* safefty turn off in case of overrun */
     if (actual_temp > MAX_POT + 50){
@@ -185,6 +183,7 @@ void loop() {
 	}
 
 	analogWrite(PWMpin, (int)pwm_out);
+//	delay(10);
 }
 
 /*
@@ -230,9 +229,12 @@ void writeHeating(int solder, int actual, int pwm)
 		if (actual < 10)
 			tft.print(" ");
 		
-		int tempDIV = round(float(solder - actual)*18.5);
-		tempDIV = tempDIV > 254 ? tempDIV = 254 : tempDIV < 0 ? tempDIV = 0 : tempDIV;
-		tft.setTextColor(Color565(tempDIV, 255-tempDIV, 0));
+		int tempDIV = abs(round(float(solder - actual)*16.5));
+		tempDIV = tempDIV > 254 ? 254 : tempDIV;
+    	if(tempDIV > 128)
+	      tft.setTextColor(Color565(255,  255 - (tempDIV-128), 0));
+		else
+		  tft.setTextColor(Color565((128 - tempDIV)*2-1, 255, 0));
 		if (standby)
 			tft.setTextColor(ST7735_CYAN);
 		tft.print(actual);
@@ -322,6 +324,10 @@ void doStandby()
  */
 uint16_t Color565(uint8_t r, uint8_t g, uint8_t b) 
 {
+  //uint16_t c = map(r, 0, 255, 1, 32) << 11;
+  //c += map(g, 0, 255, 1, 64) << 5;
+  //c += map(b, 0, 255, 1, 32);
+  //return c;
 	return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
 }
 

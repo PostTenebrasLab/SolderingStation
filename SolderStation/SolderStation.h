@@ -3,7 +3,7 @@
 
 #define INTRO
 #define INVERT_POT
-//#define DEBUG
+#define DEBUG
 
 #define sclk        13		// Don't change
 #define mosi        11		// Don't change
@@ -18,10 +18,9 @@
 #define PWMpin 	    3
 #define BLpin		5
 
-#define PWM_CTE     0.17    // PWM ~ 0.17 * target -> maintain temp
-#define Kp          3.0     // old 1.4
-#define Ki          0.006    // 
-#define Kd          2.0     // 
+#define Kp          0.9     // old 1.4
+#define Ki          0.03    // 
+#define Kd          0.4     // 
 
 #define DELAY_MEASURE 		50
 #define ADC_TO_TEMP_GAIN 	0.53     // Compared to the original Weller Station
